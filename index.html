@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Stardew Switch Seed Finder - Traveling Cart (1.6)</title>
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;margin:16px;max-width:1100px}
+    h1{margin:0 0 8px}
+    h3{margin:0 0 8px}
+    .row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end}
+    label{display:block;font-size:12px;opacity:.8;margin-bottom:4px}
+    input,button,select,textarea{font:inherit;padding:8px}
+    input[type="number"]{width:180px}
+    button{cursor:pointer}
+    .card{border:1px solid #ddd;border-radius:12px;padding:12px;margin:12px 0}
+    .muted{opacity:.85;font-size:13px}
+    .small{font-size:12px;opacity:.85}
+    .status{white-space:pre-wrap;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
+    table{border-collapse:collapse;width:100%}
+    th,td{border-bottom:1px solid #eee;padding:6px 8px;text-align:left;font-size:13px;vertical-align:top}
+    th{background:#fafafa;position:sticky;top:0}
+    .pill{display:inline-block;padding:2px 8px;border:1px solid #ddd;border-radius:999px;font-size:12px}
+    .bar{height:10px;background:#eee;border-radius:999px;overflow:hidden;margin-top:10px}
+    .barFill{height:100%;width:0%;background:#4f46e5}
+    .danger{border-color:#f2b8b5;background:#fff4f4}
+    .err{outline:2px solid #e11d48;outline-offset:1px;border-radius:6px}
+    .gridWrap{max-height:260px;overflow:auto;border:1px solid #eee;border-radius:10px}
+    .itemInput{width:100%;min-width:280px}
+    .priceInput{width:140px}
+    .qtySelect{width:90px}
+    textarea{width:100%;height:120px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+    .badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;line-height:16px;font-weight:600;white-space:nowrap}
+    .badge.provisional{background:#fff3cd;border:1px solid #ffe69c;color:#7a5b00}
+    .badge.unique{background:#d1e7dd;border:1px solid #a3cfbb;color:#0f5132}
+    .badge.ambig{background:#ffe5d0;border:1px solid #ffb885;color:#7a3b00}
+    summary{cursor:pointer}
+  </style>
+</head>
+<body>
+  <h1>Stardew Switch Seed Finder - Traveling Cart (1.6)</h1>
+  <div class="muted">
+    Browser-only brute-force to recover your save's world Game ID, so you can use the MouseyPounds Stardew Predictor.
+    Loads <code>objects.json</code> automatically (place it next to <code>index.html</code>).
+  </div>
+
+  <div class="card">
+    <h3>About this tool</h3>
+    <div class="muted">
+      This tool reproduces the Traveling Cart's RNG exactly and brute-forces possible Game IDs. The goal is to find your Game ID so you can use the MouseyPounds Stardew Predictor.
+      <br><br>
+      <b>How to use</b>
+      <ol style="margin:8px 0 0 18px; padding:0;">
+        <li><b>Select a Traveling Cart day</b> (only valid cart-open days are shown).</li>
+        <li><b>Enter the first 4 visible cart items in order</b> (top to bottom). <b>Price and Qty are required.</b> If the game does not show Qty, use <b>1</b>.</li>
+        <li>Click <b>Search</b>. Candidates will appear below as they are found.</li>
+        <li>Open the <b>MouseyPounds</b> link to verify. You can also check whether the remaining cart items match, or use a second cart day to narrow results.</li>
+      </ol>
+      <br>
+      <b>Brute-force note:</b> This takes time. On an Apple Silicon Mac (e.g. M1), a full worst-case scan can take <b>up to ~18 hours</b>.
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <div>
+        <label>Traveling Cart date</label>
+        <select id="cartDate"></select>
+        <div class="small muted" id="daysPlayedHint"></div>
+      </div>
+      <div>
+        <button id="startBtn">Search</button>
+        <button id="pauseBtn" disabled>Pause</button>
+        <button id="resumeBtn" disabled>Resume</button>
+        <button id="stopBtn" disabled>Stop</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <label>Traveling Cart (first 4 standard-stock slots, ordered)</label>
+    <div class="muted">
+      Enter items <b>in order</b>. Item: type name or ID; choose from suggestions (<span class="pill">Name (ID)</span>).
+      <b>Price and Qty are required</b>. If the game does not show Qty, use <b>1</b>.
+    </div>
+
+    <datalist id="itemsList"></datalist>
+
+    <div class="gridWrap" style="margin-top:10px;">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:70px;">Slot</th>
+            <th>Item</th>
+            <th style="width:170px;">Price</th>
+            <th style="width:120px;">Qty</th>
+          </tr>
+        </thead>
+        <tbody id="cartGrid"></tbody>
+      </table>
+    </div>
+
+    <div class="small" id="gridHint" style="margin-top:8px;"></div>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <div class="pill" id="progressPill">0.00%</div>
+      <div class="pill" id="ratePill">0 seeds/s</div>
+      <div class="pill" id="checkedPill">checked 0</div>
+      <div class="pill" id="remainingPill">candidates 0</div>
+      <div class="pill" id="objectsPill">objects: 0</div>
+    </div>
+    <div class="bar" aria-label="Progress">
+      <div class="barFill" id="progressBar" style="width:0%"></div>
+    </div>
+    <div class="status" id="status" style="margin-top:10px;">Loading...</div>
+  </div>
+
+  <div class="card">
+    <h3 style="margin:0 0 8px;">Candidates</h3>
+    <div class="small muted" id="candHelp">(none)</div>
+    <table style="margin-top:8px;">
+      <thead>
+        <tr>
+          <th>Seed (uint32)</th>
+          <th>Seed (int32)</th>
+          <th>Status</th>
+          <th>MouseyPounds</th>
+        </tr>
+      </thead>
+      <tbody id="candidates"></tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <details id="advanced">
+      <summary class="muted">Advanced options</summary>
+      <div class="muted" style="margin-top:8px;">By default, the full search space is scanned (even seeds only). Advanced options allow manual overrides.</div>
+
+      <div class="row" style="margin-top:10px;">
+        <div>
+          <label>Workers</label>
+          <input id="workers" type="number" min="1" max="32" value="16" />
+        </div>
+        <div>
+          <label>Seed range start (uint32)</label>
+          <input id="start" type="number" min="0" value="0" />
+        </div>
+        <div>
+          <label>Seed range end (exclusive)</label>
+          <input id="end" type="number" min="1" value="4294967296" />
+        </div>
+        <div>
+          <label>Chunk size (per worker)</label>
+          <input id="chunk" type="number" min="10000" value="10000" />
+        </div>
+      </div>
+
+      <div style="margin-top:12px;">
+        <details>
+          <summary class="muted">Debug tools (quick paste / export)</summary>
+          <div style="margin-top:8px;">
+            <div class="muted">Quick paste 4 lines (<code>itemId,price,qty</code>) then Apply to fill the grid.</div>
+            <textarea id="quickPaste"></textarea>
+            <div class="row" style="margin-top:8px;">
+              <button id="applyPasteBtn" type="button">Apply to Grid</button>
+              <button id="copyGridBtn" type="button">Copy Grid as 4 lines</button>
+              <span id="pasteMsg" class="muted"></span>
+            </div>
+          </div>
+        </details>
+      </div>
+
+      <div style="margin-top:12px;">
+        <details>
+          <summary class="muted">Preview cart (for a specific seed)</summary>
+          <div style="margin-top:8px;" class="row">
+            <div>
+              <label>Preview seed</label>
+              <input id="previewSeed" type="number" min="0" placeholder="seed uint32" />
+            </div>
+            <div>
+              <button id="previewBtn" type="button">Preview cart</button>
+              <button id="selfTestBtn" type="button">Self-test (fills grid)</button>
+            </div>
+          </div>
+          <div class="muted" style="margin-top:8px;">Predicted 10 standard-stock slots for the preview seed.</div>
+          <pre id="previewOut" class="status" style="margin-top:8px;">(none)</pre>
+        </details>
+      </div>
+    </details>
+  </div>
+
+  <script type="module" src="./main.js"></script>
+</body>
+</html>
