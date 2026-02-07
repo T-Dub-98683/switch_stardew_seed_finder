@@ -76,6 +76,12 @@ const state = {
 function fmt(n){ return n.toLocaleString("en-US"); }
 function toInt32(u){ return (u|0); }
 
+// Even-seeds-only mode (Switch). We always use the seed>>>1 mapping in worker.
+const USE_DIV2_ALWAYS = true;
+function toEvenU32(n){
+  return ((n >>> 0) & ~1) >>> 0;
+}
+
 // --- Traveling Cart date selector (daysPlayed) ---
 // If #cartDate exists, we use it (and populate it). Otherwise fall back to numeric #daysPlayed.
 const SEASONS = ["Spring","Summer","Fall","Winter"];
@@ -249,8 +255,9 @@ function cartToLines(cart){ return cart.map(r=>`${r.itemId},${r.price},${r.qty}`
 
 function parseQuickPaste(text){
   const lines=(text||"").split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
-  if(lines.length!==10) throw new Error(`Quick paste expects exactly 10 lines, got ${lines.length}.`);
-  return lines.map((line,idx)=>{
+  if(lines.length!==4 && lines.length!==10) throw new Error(`Quick paste expects 4 lines (or 10 from full cart), got ${lines.length}.`);
+  const useLines = (lines.length===10) ? lines.slice(0,4) : lines;
+  return useLines.map((line,idx)=>{
     const parts=line.split(",").map(s=>s.trim());
     if(parts.length!==3) throw new Error(`Line ${idx+1}: expected itemId,price,qty.`);
     const itemId=Number(parts[0]), price=Number(parts[1]), qty=Number(parts[2]);
@@ -367,15 +374,56 @@ function buildLookups(){
   }
 }
 
+// main.js — UI-only change: filter datalist suggestions to Traveling Cart–eligible items
+// This does NOT affect seed search logic or worker behavior.
+
+// --- Traveling Cart eligibility (UI-only helper) ---
+// Mirrors worker.js cart filters, but is ONLY used for dropdown/typeahead.
+function isCartEligibleObject(o){
+  const parsedId = Number(o?.id);
+  if (!Number.isFinite(parsedId)) return false;
+  if (parsedId < 2 || parsedId > 789) return false;
+  if (o.offlimits) return false;
+
+  const basePrice = Number(o?.price);
+  if (!Number.isFinite(basePrice) || basePrice === 0) return false;
+
+  const cat = Number(o?.category);
+  if (!Number.isFinite(cat)) return false;
+  if (cat >= 0 || cat === -999) return false;
+
+  const t = (o?.type ?? "").toString();
+  if (t === "Arch" || t === "Minerals" || t === "Quest") return false;
+
+  return true;
+}
+
 function populateDatalist(){
-  const dl=$("itemsList"); dl.innerHTML="";
-  const items=[];
-  for(const [id,o] of state.itemsById.entries()){ const name=(o.name??"").toString(); if(name) items.push({id,name}); }
-  items.sort((a,b)=>a.name.localeCompare(b.name));
-  const frag=document.createDocumentFragment();
-  for(const it of items){ const opt=document.createElement("option"); opt.value=`${it.name} (${it.id})`; frag.appendChild(opt); }
+  const dl = $("itemsList");
+  dl.innerHTML = "";
+
+  const items = [];
+
+  // UI-only: only suggest items that can actually appear in the Traveling Cart
+  for (const [id, o] of state.itemsById.entries()){
+    const name = (o?.name ?? "").toString();
+    if (!name) continue;
+    if (!isCartEligibleObject(o)) continue;
+    items.push({ id, name });
+  }
+
+  items.sort((a, b) => a.name.localeCompare(b.name));
+
+  const frag = document.createDocumentFragment();
+  for (const it of items){
+    const opt = document.createElement("option");
+    opt.value = `${it.name} (${it.id})`;
+    frag.appendChild(opt);
+  }
+
   dl.appendChild(frag);
 }
+
 
 function renderGrid(){
   const tb=$("cartGrid"); tb.innerHTML=""; state.rows=[];
@@ -418,11 +466,12 @@ $("previewBtn").onclick=()=>{
     if(!state.objects) throw new Error("Still loading objects.json…");
     const raw=$("previewSeed").value; if(raw==="") throw new Error("Enter a seed to preview.");
     const seed=Number(raw); if(!Number.isFinite(seed)||seed<0) throw new Error("Invalid seed.");
+    const seedEven = toEvenU32(seed);
     if(!state.workers.length){
       initWorkers(1);
-      state.workers[0].postMessage({type:"init",payload:{objects:state.objects,cart:EXPECTED_CART,dayAdjust:0,a_daysPlayed:getDaysPlayed(),useLegacyRandom:false,useDiv2:!!$("useDiv2").checked}});
+      state.workers[0].postMessage({type:"init",payload:{objects:state.objects,cart:EXPECTED_CART,dayAdjust:0,a_daysPlayed:getDaysPlayed(),useLegacyRandom:false,useDiv2:USE_DIV2_ALWAYS}});
     }
-    state.workers[0].postMessage({type:"previewCart", payload:{seed: seed>>>0, a_daysPlayed: getDaysPlayed(), useDiv2: !!$("useDiv2").checked}});
+    state.workers[0].postMessage({type:"previewCart", payload:{seed: seedEven, a_daysPlayed: getDaysPlayed(), useDiv2: USE_DIV2_ALWAYS}});
     setPasteMsg("Preview requested.");
   }catch(e){ setPasteMsg(e.message||String(e),true); }
 };
@@ -430,13 +479,14 @@ $("previewBtn").onclick=()=>{
 $("selfTestBtn").onclick=()=>{
   try{
     if(!state.objects) throw new Error("Still loading objects.json…");
-    const seed=(Math.random()*0x100000000)>>>0;
-    $("previewSeed").value=String(seed);
-    $("start").value=String(seed);
-    $("end").value=String((seed+1)>>>0);
+    const seed = (Math.random()*0x100000000)>>>0;
+    const seedEven = toEvenU32(seed);
+    $("previewSeed").value=String(seedEven);
+    $("start").value=String(seedEven);
+    $("end").value=String((seedEven+2)>>>0);
     if(!state.workers.length){
       initWorkers(1);
-      state.workers[0].postMessage({type:"init",payload:{objects:state.objects,cart:EXPECTED_CART,dayAdjust:0,a_daysPlayed:getDaysPlayed(),useLegacyRandom:false,useDiv2:!!$("useDiv2").checked}});
+      state.workers[0].postMessage({type:"init",payload:{objects:state.objects,cart:EXPECTED_CART,dayAdjust:0,a_daysPlayed:getDaysPlayed(),useLegacyRandom:false,useDiv2:USE_DIV2_ALWAYS}});
     }
     const handler=(e)=>{
       if(e.data?.type!=="previewCart") return;
@@ -448,7 +498,7 @@ $("selfTestBtn").onclick=()=>{
       setPasteMsg("Self-test filled grid; press Start.");
     };
     state.workers[0].addEventListener("message", handler);
-    state.workers[0].postMessage({type:"previewCart", payload:{seed, a_daysPlayed: getDaysPlayed(), useDiv2: !!$("useDiv2").checked}});
+    state.workers[0].postMessage({type:"previewCart", payload:{seed: seedEven, a_daysPlayed: getDaysPlayed(), useDiv2: USE_DIV2_ALWAYS}});
   }catch(e){ setPasteMsg(e.message||String(e),true); }
 };
 
@@ -456,15 +506,17 @@ $("startBtn").onclick=()=>{
   try{
     const cart=readCartFromGrid();
     const workers=Number($("workers").value)||4;
-    const start=Number($("start").value)||0;
-    const end=Number($("end").value)||4294967296;
+    const startRaw=Number($("start").value)||0;
+    const endRaw=Number($("end").value)||4294967296;
+    const start=toEvenU32(startRaw);
+    const end=(endRaw>=4294967296)?4294967296:toEvenU32(endRaw);
     const chunk=Number($("chunk").value)||2000000;
     const daysPlayed=getDaysPlayed();
-    const useDiv2=!!$("useDiv2").checked;
+    const useDiv2=USE_DIV2_ALWAYS;
 
     state.running=true; state.paused=false; state.stopRequested=false;
     state.inFlight=0;
-    state.total=end-start; state.checked=0; state.candidates.clear();
+    state.total=(end-start)/2; state.checked=0; state.candidates.clear();
     initWorkers(workers);
     for(const w of state.workers){ w.postMessage({type:"init",payload:{objects:state.objects,cart,dayAdjust:0,a_daysPlayed:daysPlayed,useLegacyRandom:false,useDiv2}}); }
     setStatus("Running…"); updatePills(); renderCandidates(); enableButtons(true);
